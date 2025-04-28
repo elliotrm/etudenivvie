@@ -1,7 +1,4 @@
----
-title: "Étude de l'espérance de vie dans le monde (2022)"
-output: github_document
----
+# Étude de l'espérance de vie dans le monde (2022)
 
 # Projet
 
