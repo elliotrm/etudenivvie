@@ -1,0 +1,929 @@
+---
+title: "Étude de l'espérance de vie dans le monde par pays en 2022"
+author: "Thierno BAH et Elliot RAULT-MAISONNEUVE "
+date: "2025-02-12"
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, include = FALSE}
+library(knitr)
+library(kableExtra)
+library(dplyr)
+library(tidyr)
+library(car)
+library(ggplot2)
+library(readxl)
+library(corrplot)
+library(AER)
+library(countrycode)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(caret)
+library(glmnet)
+library(pls)
+library(psych)
+library(caret)
+library(ggcorrplot)
+library(patchwork)
+library(DoubleML)
+library(mlr3)
+library(mlr3tuning)
+library(mlr3learners)
+library(ggpubr)
+library(paradox)
+```
+
+# Introduction :
+
+L’espérance de vie constitue l’un des indicateurs les plus représentatifs du niveau de développement d’un pays. Il reflète de manière synthétique la qualité des systèmes de santé, l’accès à l’éducation, les conditions économiques, les infrastructures de base, ainsi que la stabilité institutionnelle. Pourtant, malgré les avancées technologiques et économiques observées au cours des dernières décennies, de fortes disparités subsistent entre les pays, et l’espérance de vie connaît même un recul dans certaines régions du monde. Ces constats soulèvent de nombreuses interrogations quant aux mécanismes réels qui influencent la longévité des populations.
+
+Dans ce contexte, ce projet a pour objectif d’analyser les principaux facteurs susceptibles d’influencer l’espérance de vie à l’échelle mondiale, en s’appuyant sur des données récentes de l’année 2022. L’ambition de ce travail ne se limite pas à l’identification de corrélations entre les variables explicatives et l’espérance de vie. Il s’agit également d’explorer les limites des approches économétriques traditionnelles face à des problématiques complexes telles que l’endogénéité, la multicolinéarité, ou encore la sélection de variables dans des contextes de haute dimension.
+
+Ce projet s’inscrit ainsi dans une démarche d’apprentissage et de mise en pratique des outils d’économétrie avancée, incluant les méthodes d’estimation par variables instrumentales, la technique des doubles moindres carrés, les méthodes de régularisation (Ridge, Lasso, Elastic Net), l’analyse en composantes principales (PCA), ainsi que les approches modernes comme le double machine learning.
+
+Mais pour obtenir des résultats solides, il est nécessaire de dépasser les simples corrélations. Certains facteurs peuvent être mal mesurés, dépendre d'autres variables du modèle, ou être très corrélés entre eux, ce qui rend les estimations classiques peu fiables. C’est pourquoi nous avons structuré notre démarche autour de plusieurs étapes clés :
+
+**1 - Estimation d’un modèle de base par régression linéaire (MCO) pour repérer les relations principales entre l’espérance de vie et les variables explicatives.**
+
+**2 - Analyse de l’endogénéité, pour détecter les biais potentiels liés à certaines variables, et recours, si nécessaire, à des méthodes comme les moindres carrés en deux étapes (2SLS).**
+
+**3 - Traitement de la multicolinéarité, en utilisant des techniques modernes comme la PCA, le Ridge, le Lasso ou l’Elastic Net, afin d’améliorer la stabilité des estimations.**
+
+**4 - Enfin, application du double machine learning, afin d’estimer de manière robuste l’effet causal de certains facteurs dans un environnement à haute dimension.**
+
+Toutes ces étapes ont pour but d’obtenir les estimations les plus fiables possibles, et ainsi de mieux comprendre comment les différents facteurs influencent l’espérance de vie dans le monde.
+
+# Présentation des variables :
+```{r, echo = FALSE}
+code_book_data <- read_excel("data/codebook_esperance_vie.xlsx")
+
+kable(code_book_data) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), font_size = 7)
+```
+
+## Explications du choix des variables explicatives et l'effet attendu :
+
+Pour ce projet, nous avons choisi les variables que nous estimons les plus pertinentes pour expliquer les différences d’espérance de vie entre les pays. Ces variables couvrent plusieurs aspects importants : la santé, l’économie, l’éducation, les institutions et les conditions de vie de base. Chacune de ces dimensions peut avoir un impact direct ou indirect sur la durée de vie des populations.
+
+**Variables sanitaires :**
+
+La malnutrition reflète un manque d’accès à une alimentation suffisante et équilibrée, ce qui peut affaiblir la santé et augmenter les risques de maladies. La mortalité infantile est un indicateur de la qualité du système de santé, surtout pour les enfants. Nous nous attendons donc à ce que ces deux variables aient un effet négatif sur l’espérance de vie.
+
+**Variable économique :**
+
+Le PIB par habitant donne une idée du niveau de richesse dans un pays. Plus ce revenu est élevé, plus les populations ont accès à de meilleurs services, comme la santé ou l’alimentation. Nous nous attendons donc à un effet positif.
+
+**Variable éducative :**
+
+Les dépenses publiques en éducation montrent l’importance accordée à l’éducation dans le pays. L’éducation permet souvent de mieux comprendre les enjeux de santé et d’adopter de meilleurs comportements. Nous nous attendons donc à un effet positif.
+
+**Variables institutionnelles :**
+
+Le contrôle de la corruption, l’efficacité du gouvernement, l’état de droit et la stabilité politique représentent la qualité des institutions dans un pays. Des institutions solides permettent de mieux gérer les ressources et d’assurer un bon accès aux services de base. Ces variables devraient avoir un effet positif sur l’espérance de vie.
+
+**Variables environnementales et d’infrastructures de base :**
+
+L’accès à l’eau potable et à l’électricité est fondamental pour vivre dans de bonnes conditions. Cela permet de prévenir certaines maladies et d’améliorer le confort de vie. Ces deux variables sont attendues avec un effet positif.
+
+
+# Préparation et nettoyage des données : 
+
+Avant de passer à l’analyse, nous avons d’abord nettoyé les données pour pouvoir travailler sur une base cohérente et exploitable. Nous avons commencé par supprimer les variables qui avaient plus de 60% de valeurs manquantes, car elles étaient trop incomplètes pour être utilisées. Par exemple, cela a été le cas de la variable sur les dépenses en santé et celle sur l’indice de Gini, que nous avons dû retirer de notre base.
+
+Ensuite, nous avons aussi supprimé les pays qui avaient plus de 50% de données manquantes, pour éviter d’avoir trop de valeurs reconstruites artificiellement.
+
+Pour les données manquantes restantes, nous avons utilisé une méthode d’imputation avec les 5 plus proches voisins (KNN). L’idée est simple : pour chaque valeur manquante, nous avons cherché les 5 pays les plus proches (en se basant sur les autres variables disponibles), puis nous avons pris la moyenne de leurs valeurs pour compléter.
+
+Grâce à ces étapes, nous avons obtenu une base de données plus propre, plus complète et prête pour faire nos analyses.
+
+```{r cars, include = FALSE}
+data <- read.csv2("data/vie_esp.csv", stringsAsFactors = FALSE)
+head(data)
+
+#Suppression des lignes avec des valeurs manquantes 
+data<-na.omit(data)
+
+
+data_etude <- data[,-1]
+
+data_etude <- data_etude[,c(6,1,2 ,3,4,5,7:ncol(data_etude))]
+
+#data_etude <-lapply(data_etude, as.numeric)
+#verification de la nature des variables 
+
+#constat: c'est toutes des variables numériques et on a pas de valeurs manquantes
+
+```
+
+# Statistiques descriptives : 
+
+```{r, echo = FALSE}
+describe(data)
+```
+
+Nous constatons qu’il existe de fortes inégalités entre les pays. Par exemple, le PIB par habitant varie énormément, allant de moins de 300 dollars à plus de 200 000 dollars. Nous retrouvons la même chose pour la malnutrition, qui peut atteindre plus de 50% dans certains pays, ou encore pour la mortalité infantile, qui peut aller jusqu’à 76 décès pour 1 000 naissances. D’autres variables comme l’accès à l’électricité ou à l’eau potable ont des médianes très élevées (autour de 100%), mais certains pays restent encore en retard. Ces chiffres traduisent des écarts importants en matière de développement, ce qui est logique vu que nous travaillons à l’échelle mondiale. Pour mieux comprendre la répartition de chaque variable et détecter les éventuelles valeurs extrêmes, nous allons maintenant visualiser la distribution de chaque indicateur à l’aide de boxplots.
+
+## Statistiques univariées :
+
+### Visualisation de la distribution de chaque variable :
+
+```{r, echo = FALSE, warning = FALSE}
+# Fonction pour créer tous les boxplots et les afficher ensemble
+box_visu <- function(df){
+  plots <- list()
+  for(name in colnames(df)){
+    p <- ggplot(df, aes(y = .data[[name]])) +
+      geom_boxplot() +
+      labs(y = name) +
+      theme_minimal(base_size = 10)
+    plots[[name]] <- p
+  }
+  wrap_plots(plots, ncol = 4)
+}
+
+box_visu(data_etude)
+```
+
+En observant la distribution de chacune des varibles, nous retrouvons ce que nous avions déjà constaté dans les statistiques descriptives : plusieurs variables présentent des valeurs extrêmes, comme l’accès à l’électricité, le PIB par habitant, l’accès à l’eau potable ou encore la malnutrition. Ces points très éloignés du reste des données correspondent sûrement à des pays en situation particulière, soit très développés, soit en grande difficulté. Ces visualisations confirment l’existence de fortes inégalités entre les pays pour ces indicateurs, ce qui est cohérent avec les disparités économiques, sanitaires et d’infrastructure que nous observons dans le monde.
+
+### Cartographies :
+
+#### Variable endogène : Espérance de vie
+
+```{r, fig.align='center', fig.width=8, fig.height=5, echo = FALSE}
+#Création du dataframe pour les cartographies
+liste_pays <- unique(countrycode::codelist[, c("country.name.en", "iso3c")])
+colnames(liste_pays) <- c("Pays", "ISO3")
+
+#Rajout de l'isocode Kosovo
+liste_pays$ISO3[liste_pays$Pays == "Kosovo"] <- "KOS"
+
+#Merge avec le data de base
+data_carto <- merge(data, liste_pays, by = "Pays")
+
+#Changement de l'isocode de South Sudan car problème dans fichier sf
+data_carto$ISO3[data_carto$pays == "South Sudan"] <- "SDS"
+
+#Ajout du fichier shapefile puis merge
+world <- ne_countries(scale = "medium", returnclass = "sf") %>%
+  select("adm0_a3", "geometry")
+
+data_carto_new <- merge(world, data_carto, by.x = "adm0_a3", by.y = "ISO3") 
+
+
+ggplot(data_carto_new) +
+  geom_sf(aes(fill = Life_expectancy)) +
+  scale_fill_gradientn(colors = c("lightgreen", "green", "darkgreen"), na.value = "white") +  # Palette personnalisée
+  theme_minimal() +
+  labs(title = "Espérance de vie par pays", fill = "Années")
+```
+
+Nous remarquons en premier lieu que les pays d'Afrique ont une espérance de vie très basse comparé aux pays développés, comme le Japon par exemple. Nous avons ici un écart de 15 à 20 ans approximativement entre les pays en voie de développement et les pays développés. Nous verrons ensuite quels pourraient être les facteurs qui explique ces écarts entre ces pays.
+
+#### PIB par habitant :
+
+```{r, fig.align='center', fig.width=8, fig.height=5, echo = FALSE}
+ggplot(data_carto_new) +
+  geom_sf(aes(fill = GDP_per_habitant)) +
+  scale_fill_gradientn(colors = c("lightgreen", "darkgreen", "black"), na.value = "white") +  # Palette personnalisée
+  theme_minimal() +
+  labs(title = "PIB par habitant par pays", fill = "PIB par habitant")
+```
+
+Nous pouvons constater que les pays développés ont en effet un PIB par habitant plus élevé que les pays en voie de développement et émergents. Nous remarquons également, du moins dans la base de données que Monaco est une valeur aberrante avec un PIB par habitant de 213 937$ en dollars constants 2015. Cela s'explique car c'est une principauté qui regroupe des individus très riches, près d'un habitant sur deux est millionnaire.
+
+#### Accès à l'eau :
+
+```{r, fig.align='center', fig.width=8, fig.height=5, echo = FALSE}
+ggplot(data_carto_new) +
+  geom_sf(aes(fill = Access_water)) +
+  scale_fill_gradientn(colors = c("lightblue", "blue", "darkblue"), na.value = "white") +  # Palette personnalisée
+  theme_minimal() +
+  labs(title = "Accès à l'eau par pays", fill = "Accès à l'eau en %")
+```
+
+Cette cartographie illustre les problèmes d'accès à l'eau de la plupart des pays d'Afrique. En effet, ceci est dû au climat qui est très aride, des problèmes liés à la gestion de l'eau comme le manque d'infrastructures et d'autres facteurs. Ceci aura de fortes chances d'impacter le niveau de vie, surtout dans les pays d'Afrique.
+
+
+## Statistiques bivariées :
+
+### Nuages de points pour visualiser la relation entre chaque variable et l'espérance de vie :
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+nuages <- function(df){
+  v <- colnames(df)
+  v_pib <- v[1]
+  v_res <- v[-1]
+  
+  plots <- list()
+  
+  for(name in v_res){
+    p <- ggplot(df, aes(x = .data[[name]], y = .data[[v_pib]])) +
+      geom_point(alpha = 0.6, color = "#2c3e50") +
+      geom_smooth(method = "lm", se = FALSE, color = "#e74c3c") +
+      labs(
+        x = name,
+        y = v_pib
+      ) +
+      theme_minimal(base_size = 10)
+    
+    plots[[name]] <- p
+  }
+  
+  # Affichage en grille (ajuste ncol selon tes besoins)
+  wrap_plots(plots, ncol = 4)
+}
+
+nuages(data_etude)
+```
+
+En analysant les nuages de points entre l’espérance de vie et chaque variable explicative, nous retrouvons globalement les effets auxquels nous nous attendions dès le départ. Certaines variables semblent avoir une relation positive avec l’espérance de vie, comme le PIB par habitant, l’accès à l’eau potable, l’accès à l’électricité, les dépenses en éducation, ou encore des indicateurs institutionnels comme l’efficacité du gouvernement. Cela correspond bien à notre intuition : plus un pays est développé, mieux ses citoyens vivent longtemps.
+
+À l’inverse, nous observons une relation négative pour des variables comme la malnutrition ou la mortalité infantile, ce qui est aussi logique, car elles reflètent des problèmes graves de santé publique.
+
+
+### Matrice de corrélation des variables :
+
+```{r, echo = FALSE}
+#Matrice de correlation et viualisation
+#str(data_etude)
+
+mat_corr <- cor(data_etude, use = "complete.obs")
+#mat_corr
+ggcorrplot(mat_corr,method = "square",   type = "upper")
+
+
+```
+
+En observant la matrice de corrélation, nous constatons qu’il existe une très forte corrélation positive entre certaines variables, notamment entre le contrôle de la corruption et l’état de droit, ou encore entre l’efficacité du gouvernement et le contrôle de la corruption. Ces corrélations sont logiques car ces variables mesurent toutes des aspects institutionnels liés à la qualité de la gouvernance. Nous remarquons aussi que l’espérance de vie est fortement corrélée négativement avec la malnutrition et la mortalité infantile, ce qui est cohérent avec notre intuition : plus ces indicateurs sont élevés, plus la qualité de vie est faible, donc l’espérance de vie diminue. À l’inverse, des variables comme le PIB par habitant, l’accès à l’eau ou l’électricité ont une corrélation positive avec l’espérance de vie, ce qui confirme l’importance des infrastructures de base et du niveau de développement dans la santé des populations.
+
+# Partie 1 : Endogénéité
+
+Dans cette partie, nous allons nous intéresser au problème d’endogénéité, qui peut fausser les résultats d’une régression si elle n’est pas prise en compte. En regardant la matrice de corrélation, nous remarquons que la variable "contrôle de la corruption" est fortement corrélée à d’autres indicateurs institutionnels comme l’efficacité du gouvernement, l’état de droit et la stabilité politique. Cette forte corrélation peut révéler un problème d’erreur de mesure, ou même une relation causale inversée, ce qui rend cette variable potentiellement endogène.
+
+Pour tester cette hypothèse, nous commencons par estimer le modèle restreint, en excluant les variables qui risquent de causer de l’endogénéité (efficacité du gouvernement, état de droit et stabilité politique). Ensuite, nous utilisons le test de Hausman pour vérifier si le "contrôle de la corruption" est réellement endogène ou non. Si le test confirme l’endogénéité, nous corrigerons le biais en utilisant des méthodes adaptées comme les variables instrumentales ou la méthode des doubles moindres carrés (2SLS).
+
+## Estimation du modèle restreint :
+
+```{r, echo = FALSE}
+model <- lm(Life_expectancy ~ Access_electricity + Control_corruption + GDP_per_habitant +
+              Dep_education + Mortality_infant + Access_water + Mal_nutrition,
+            data = data_etude)
+
+summary(model)
+vif(model)
+```
+
+Ici, nous voyons que le modèle est globalement bon, avec un R² d’environ 87%, donc 87% des variations des données sont expliquées par le modèle, toutes choses égales par ailleurs. Par contre, certaines variables comme l’accès à l’électricité, l’accès à l’eau et la malnutrition ne sont pas significatives. Une raison possible, c’est qu’elles sont très corrélées avec d’autres variables du modèle. Par exemple, l’accès à l’eau est fortement lié à l’accès à l’électricité, et la malnutrition est très liée à la mortalité infantile. Du coup, c’est compliqué de voir leur effet individuel. Les VIF confirment ça : nous voyons que l'accès à l’électricité (≈ 6.4) et l'accès à l’eau (≈ 7.6) ont une multicolinéarité modérée, ce qui peut cacher leur impact sur la variable endogène.
+
+## Test d'endogéneité de Haussman :
+
+```{r, echo = FALSE}
+model_2SLS <- ivreg(Life_expectancy ~ Control_corruption + GDP_per_habitant + Dep_education + 
+                    Mortality_infant + Mal_nutrition +Access_water + Access_electricity| 
+                     Government_.Effectiveness + Rule_of_Law + Political_Stability+ GDP_per_habitant + Dep_education + 
+                    Mortality_infant + Mal_nutrition + Access_water + Access_electricity, data = data_etude)
+summary(model_2SLS, diagnostics = TRUE)
+
+```
+
+Ici, nous avons utilisé la méthode des variables instrumentales pour voir si le contrôle de la corruption était endogène, c’est-à-dire s’il pouvait fausser notre modèle. Pour ça, nous avons utilisé comme instruments l’efficacité du gouvernement, l’état de droit et la stabilité politique, car ces variables sont liées à la corruption mais pas directement à l’espérance de vie.
+
+Ensuite, nous avons fait le test de Hausman pour vérifier si le contrôle de la corruption est vraiment endogène. Le test donne un p-value de 0.31, donc nous ne rejetons pas l’hypothèse d’exogénéité. Ça veut dire que nous n’avons pas de preuve que cette variable pose problème. Du coup, le modèle MCO reste le plus adapté ici.
+
+## Estimation du modèle global :
+
+```{r, echo = FALSE}
+model1 <- model <- lm(Life_expectancy ~.,data = data_etude)
+summary(model1)
+```
+
+Comme précédemment, le test de Hausman a montré qu’il n’y avait pas de problème d’endogénéité, ce qui nous a permis d’estimer le modèle complet avec l’ensemble des variables.
+
+Cependant, plusieurs variables ne ressortent pas significatives, comme l’accès à l’eau, l’électricité, la corruption, ou encore l’état de droit. Cela peut s’expliquer par un problème de multicolinéarité, car certaines de ces variables sont très corrélées entre elles, ce qui rend leur effet individuel difficile à isoler. Nous allons donc traiter ce problème dans la prochaine partie, en utilisant des méthodes comme la PCA, le Ridge ou le Lasso, pour mieux gérer les variables corrélées.
+
+
+## Test de normalité des residus :
+
+```{r, echo = FALSE, warning = FALSE}
+shapiro.test(residuals(model1))
+#on a une  p_value > 0.05 donc on rejette l'hypothes de non normalité des residus .
+#voyons avec une representation
+res <- residuals(model)
+ggplot(data.frame(res), aes(x = res)) + 
+  geom_histogram(aes(y = ..density..), bins = 40, fill = "skyblue", color = "black") +
+  geom_density(color = "red", size = 1) +
+  labs(title = "Histogramme et densité des résidus",
+       x = "Résidus", 
+       y = "Densité") +
+  theme_minimal()
+
+```
+
+Pour vérifier si les résidus du modèle global suivent une loi normale, nous avons utilisé le test de Shapiro-Wilk. La p-value obtenue est de 0.008, ce qui est inférieur à 0.05, donc nous rejettons l’hypothèse de normalité. Cela signifie que les résidus ne suivent pas parfaitement une loi normale. Pourtant, visuellement, l’histogramme avec la courbe de densité montre une forme assez proche d’une distribution normale. Cette légère non-normalité ne remet pas en cause la validité globale du modèle, mais nous gardons ça en tête pour interpréter correctement les résultats.
+
+# Partie 2 : Problème de multicolinéarité
+
+Dans cette partie, nous nous intéressons au problème de multicolinéarité, c’est-à-dire quand plusieurs variables explicatives sont fortement corrélées entre elles. Cela peut poser un problème dans une régression MCO, car ça rend difficile pour savoir l’effet réel de chaque variable et cela peut fausser les résultats.
+
+Pour corriger ce souci, nous allons utiliser deux types de méthodes :
+
+Nous utiliserons d’abord, les méthodes de réduction de dimension, comme la PCA (Analyse en Composantes Principales) et la PLS (Moindres Carrés Partiels), qui permettent de résumer l’information des variables corrélées en un petit nombre de nouvelles variables.
+
+Ensuite, nous utiliserons les méthodes de régularisation, comme le Ridge, le Lasso et l’Elastic Net, qui ajoutent une pénalité dans le modèle pour réduire l’impact des variables trop proches les unes des autres et rendre la régression plus fiable.
+
+## Méthode de réduction de dimension :
+
+### Analyse en composantes principales :
+
+
+```{r, echo = FALSE}
+set.seed(1234)
+pcr_etude <- pcr(Life_expectancy~., data=data_etude, scale=TRUE, jackknife = TRUE, validation="CV", ncomp=10)
+summary(pcr_etude)
+```
+
+Nous constatons que l’erreur de validation croisée (CV) diminue progressivement à mesure que nous ajoutons des composantes, et atteint son minimum autour de la 7e composante. À ce niveau-là, l’erreur est la plus faible, ce qui veut dire que le modèle est le plus précis avec 7 composantes. En plus, nous voyons que les 7 premières composantes expliquent environ 98% de la variance des variables explicatives et plus de 87% de la variance de l’espérance de vie. Nous pouvons donc dire que 7 composantes suffisent largement pour capturer l’essentiel de l’information.
+
+
+#### Pourcentage de variance expliquée par chaque composante :
+
+```{r, echo = FALSE}
+explvar(pcr_etude)
+```
+
+Ici, nous voyons que la 1ère composante explique à elle seule plus de 62% de la variance des variables explicatives, la 2ème en ajoute environ 14%, et la 3ème presque 10%. À elles trois, elles expliquent donc plus de 85% de la variance totale, ce qui montre qu’elles résument déjà très bien les données. Lorsque nous allons jusqu’à la 7e composante, nous atteignons environ 98% de variance expliquée, ce qui veut dire que les 7 premières composantes suffisent largement pour capturer presque toute l’information.
+
+#### Graphiques de validation pour le choix du nombre de composantes :
+
+```{r, fig.align='center', fig.width=8, fig.height=5, echo = FALSE}
+par(mfrow=c(2,2))
+validationplot(pcr_etude, legendpos="topright")
+validationplot(pcr_etude, val.type = "MSEP", legendpos="topright")
+validationplot(pcr_etude, val.type = "R2")
+plot(pcr_etude, ncomp=7, line=TRUE)
+```
+
+D’après les graphiques, nous observons que l’erreur de prédiction (RMSE) diminue rapidement jusqu’à la 7e composante, puis reste presque constante. Cela veut dire que la 7e composante est celle qui donne les meilleures performances en minimisant l’erreur. En parallèle, le R² augmente fortement jusqu’à cette composante et se stabilise ensuite, ce qui montre que 7 composantes suffisent à expliquer la majeure partie de la variance. Enfin, le graphique de validation montre que les valeurs prédites sont très proches des valeurs observées, ce qui confirme la bonne qualité du modèle basé sur les 7 composantes.
+
+##### Coefficients des composantes :
+
+```{r, echo = FALSE}
+set.seed(1234)
+#Changement avec 7 composantes car meilleur
+pcr_etude_new <- pcr(Life_expectancy~., data=data_etude, scale=TRUE, jackknife = TRUE, validation="CV", ncomp=7)
+#On recalcule les Bêta chapeau pour enlever la multicolinéarité, avoir des composantes orthogonales
+coefficients(pcr_etude_new, ncomp=7)
+
+```
+
+Nous remarquons que les coefficients sont beaucoup plus petits que ceux du modèle MCO. Cela montre que la PCR réduit fortement l’impact de chaque variable individuelle. C’est normal : le modèle ne travaille plus directement sur les variables d’origine, mais sur des combinaisons linéaires de celles-ci à travers les composantes principales. Du coup, les coefficients sont plus faibles, ce qui permet aussi de réduire les effets de la multicolinéarité.
+
+#### Visualisation des coefficients :
+
+```{r, fig.align='center', fig.width=8, fig.height=5, echo = FALSE, warning = FALSE}
+coefplot(pcr_etude_new, ncomp=7, se.whiskers = TRUE, labels = prednames(pcr_etude), cex.axis = 0.5)
+```
+
+Nous retrouvons ici les signes des coefficents que nous avons observés précédemment : par exemple, la mortalité infantile a un effet très négatif sur l’espérance de vie, tandis que l’efficacité du gouvernement et l’état de droit ont des effets positifs. Ce qui est intéressant aussi, c’est de regarder les intervalles de confiance autour de chaque coefficient. Pour certaines variables comme l’accès à l’électricité, le contrôle de la corruption ou encore la malnutrition, nous voyons que les barres d’erreur croisent la ligne zéro. Cela veut dire que leurs effets ne sont pas significatifs statistiquement.
+
+### Prédiction :
+
+#### Définition de la base d'appretissage et de test :
+
+```{r, include = FALSE}
+set.seed(1234)
+#valdidation croisée Holdout
+#partitionnement des données
+train.samples <- data_etude$Life_expectancy %>% createDataPartition(p = 0.8, list = FALSE)
+train <- data_etude[train.samples,]
+test <- data_etude[-train.samples,]
+
+```
+
+Ici nous avons séparé nos données : 80% vont servir à l’apprentissage du modèle, et les 20% restants seront utilisés pour tester sa capacité à bien prédire sur de nouvelles données.
+
+#### Estimation sur la base d'apprentissage :
+
+```{r, echo = FALSE}
+set.seed(1234)
+#Estimation du modèle sur la base d'apprentissage
+pcr_etude_train <- pcr(Life_expectancy~., data=train, scale=TRUE, validation="CV", ncomp=10)
+summary(pcr_etude_train)
+```
+
+Cette estimation du modèle sur les données d’apprentissage montre que l’erreur diminue jusqu’à la 8ème composante. Même si, précédemment, le minimum avait été atteint à la 7ème composante sur l’ensemble des données, cette petite différence peut s’expliquer par le fait que nous travaillons ici uniquement sur un sous-échantillon. Dans tous les cas, à partir de la 7e ou 8e composante, l’amélioration devient très faible. Nous pouvons donc dire que 7 ou 8 composantes suffisent largement pour bien expliquer l’espérance de vie.
+
+#### Graphiques de validation  pour le choix du nombre de composantes :
+
+```{r, fig.align='center', fig.width=8, fig.height=5, echo = FALSE}
+par(mfrow=c(2,2))
+validationplot(pcr_etude_train, legendpos="topright")
+validationplot(pcr_etude_train, val.type = "MSEP", legendpos="topright")
+validationplot(pcr_etude_train, val.type = "R2")
+```
+
+En regardant les graphiques, nous remarquons que l’erreur de prédiction (RMSEP) diminue jusqu’à la 8e composante, où elle atteint son minimum. Mais à partir de la 7e composante, la courbe devient presque plate, ce qui veut dire que l’amélioration devient très faible. Le R² aussi reste stable à partir de là. Nous pouvons donc dire que 7 ou 8 composantes suffisent largement pour bien expliquer la variable "espérance de vie".
+
+#### Erreur moyenne sur les données de test pour chaque composante :
+
+```{r, echo = FALSE}
+RMSEP(pcr_etude_train, newdata=test)
+```
+
+Sur les données de test, nous constatons que l’erreur RMSEP diminue jusqu’à la 7e composante, où elle atteint son minimum (environ 3.169). Cela montre que le modèle prédit le mieux à ce stade. Après la 7e composante, l’erreur remonte légèrement, ce qui confirme que trop de composantes peuvent réduire la performance sur des données nouvelles. Donc, même sur le test, 7 composantes reste le meilleur choix.
+
+#### L'erreur moyenne sur la base de test pour les 7 composantes :
+
+```{r, echo = FALSE}
+#Prédiction sur la base test avec 7 composantes
+
+pcr_pred <- predict(pcr_etude_train, newdata=test, ncomp=7)
+
+y_test <- test$Life_expectancy
+
+sqrt(mean((pcr_pred - y_test)^2))
+```
+
+En utilisant les 7 composantes pour faire la prédiction sur les données de test, nous obtenons une erreur RMSE de 3.169, ce qui confirme les résultats précédents : le modèle est le plus performant avec 7 composantes. 
+
+## PLS (Estimation avec la méthode des moindres carrés partiels) :
+
+```{r, echo = FALSE}
+set.seed(1234)
+pls_est <- plsr(Life_expectancy~., data=data_etude, scale=TRUE, jackknife = TRUE, validation = "CV")
+summary(pls_est)
+```
+
+Contrairement à la PCR, nous remarquons qu’avec la méthode PLS, l’erreur de prédiction (RMSE) diminue rapidement jusqu’à la 5e composante, puis se stabilise. De plus, le pourcentage de variance expliquée des variables explicatives atteint environ 92% dès la 5e composante. Cela montre que le modèle PLS arrive à capter presque toute l'information utile avec seulement 5 composantes.
+
+#### Graphiques de validation pour le choix du nombre de composantes :
+
+```{r, fig.align='center', fig.width=8, fig.height=5, echo = FALSE}
+par(mfrow=c(2,2))
+validationplot(pls_est, legend="topright")
+validationplot(pls_est, val.type = "MSEP", legend="topright")
+validationplot(pls_est, val.type="R2")
+
+```
+
+D’après les graphiques, nous voyons que l’erreur de prédiction (RMSEP) diminue rapidement jusqu’à la 5e composante, puis se stabilise. Le R² devient aussi presque constant après la 5e composante, ce qui confirme que 5 composantes suffisent pour bien modéliser l’espérance de vie avec la méthode PLS.
+
+#### Coefficients des composantes :
+
+```{r, echo = FALSE}
+coefficients(pls_est, ncomp=5)
+```
+
+Nous remarquons que les coefficients sont beaucoup plus petits que ceux du modèle MCO. Cela montre que la PLS réduit aussi fortement l’impact de chaque variable individuelle.
+
+#### Visualisation des coefficients pour chaque composante :
+
+```{r, fig.align='center', fig.width=8, fig.height=5, echo = FALSE, warning = FALSE}
+coefplot(pls_est, ncomp=5, se.whiskers=TRUE, labels = prednames(pls_est), cex.axis = 0.5)
+```
+
+Comme pour la PCR, nous remarquons ici avec la méthode PLS que certains coefficients sont assez faibles ou sont non significatifs (comme par exemple le contrôle de la corruption ou la malnutrition). Globalement, les effets des variables restent cohérents, mais la méthode réduit leur intensité à cause de la régularisation.
+
+### Prédiction :
+
+#### Estimation sur la base d'apprentissage :
+
+```{r, echo = FALSE}
+set.seed(1234)
+model_pls <- plsr(Life_expectancy~., data=train, scale=TRUE, jackknife=TRUE, validation="CV")
+summary(model_pls)
+
+```
+
+Sur les données d’apprentissage, comme pour la PCR, nous remarquons un petit décalage. L’erreur diminue jusqu’à la 5e composante, alors que sur l’ensemble des données, elle atteignait son minimum dès la 6e. Cela peut s’expliquer par le fait que nous travaillons ici sur un échantillon, donc les résultats peuvent légèrement varier.
+
+#### Graphiques de validation pour le choix du nombre de composantes :
+
+```{r, fig.align='center', fig.width=8, fig.height=5, echo = FALSE}
+#Graphiques
+
+par(mfrow=c(2,2))
+validationplot(model_pls, legend="topright")
+validationplot(model_pls, val.type = "MSEP", legend="topright")
+validationplot(model_pls, val.type="R2")
+```
+
+Sur les graphiques de validation croisée de la PLS, nous remarquons que l’erreur de prédiction (RMSEP et MSEP) diminue rapidement jusqu’à la 6e composante, puis devient quasiment stable. Le R² augmente également jusqu’à cette composante. Cela confirme que 6 composantes suffisent à bien expliquer l’espérance de vie dans notre échantillon d’apprentissage.
+
+#### Erreur moyenne sur les données de test pour chaque composante :
+
+```{r, echo = FALSE}
+#RMSEP
+RMSEP(model_pls, newdata = test)
+```
+
+Sur les données test, nous observons que l’erreur est minimale à la 6e composante, ce qui confirme les résultats précédents de façon approximative : le modèle PLS atteint une bonne performance prédictive avec seulement 6 composantes.
+
+#### L'erreur moyenne sur la base de test pour les 6 composantes :
+
+```{r, echo = FALSE}
+#Prédiction sur la base test avec 5 composantes
+pcr_pred_pls <- predict(model_pls, newdata=test, ncomp=6)
+
+sqrt(mean((pcr_pred_pls - y_test)^2))
+```
+
+En calculant l’erreur moyenne de prédiction sur les données test avec 6 composantes, nous obtenons une valeur d’environ 3.18. Cela correspond bien à l’erreur minimale observée précédemment pour la 6e composante, ce qui confirme qu’elle est suffisante pour bien prédire l’espérance de vie avec le modèle PLS.
+
+## Méthode de régularisation :
+
+### Ridge / Lasso / Elastic Net :
+
+#### Centrage et réduction des données : 
+
+```{r, echo = FALSE}
+#Centrer réduire les données
+cr <- preProcess(data_etude, method=c("center", "scale")) 
+data_etude_cr <- predict(cr, data_etude)
+summary(data_etude_cr)
+```
+
+Ici, nous centrons et nous réduisons les données pour éviter les problèmes d’échelle entre les variables. Cela permet à toutes les variables d’avoir le même poids dans les méthodes de régularisation comme le Ridge, le Lasso ou l’Elastic Net, qui sont sensibles aux différences de grandeur entre les variables.
+
+#### Séparation des donnees en données d'apprentissage et de test :
+
+```{r, include = FALSE}
+set.seed(123)
+#separation des données en données de test et d'entrainement
+train.samples <- data_etude_cr$Life_expectancy %>% createDataPartition(p=0.8, list = FALSE)
+train.data <- data_etude_cr[train.samples,]
+test.data <-  data_etude_cr[- train.samples,]
+```
+
+Ici nous avons séparé encore une fois nos données : 80% vont servir à l’apprentissage du modèle, et les 20% restants seront utilisés pour tester sa capacité à bien prédire sur de nouvelles données.
+
+### Estimation Ridge :
+
+```{r, echo = FALSE, warning = FALSE}
+set.seed(1234)
+lambda <- 10^seq(-3, 3, length = 100)
+
+ridge <- train(
+  Life_expectancy ~., data = train.data, method = "glmnet",
+  trControl = trainControl("cv", number = 10),
+  tuneGrid = expand.grid(.alpha = 0, .lambda = lambda)
+  )
+
+bestLambda <- ridge$bestTune$lambda
+bestLambda
+
+```
+
+En appliquant la régression Ridge avec une validation croisée, nous obtenons une valeur optimale de lambda = 0.0869749. Ce qui signifie que le modèle Ridge est le plus performant avec ce niveau de régularisation.
+
+#### Prédiction (Ridge) :
+
+```{r, echo = FALSE}
+predictions <- (ridge %>% predict(test.data))
+actuals <- (test.data$Life_expectancy)
+df_perf <- (data.frame(pred = predictions, obs = actuals))
+# Model prediction performance
+rmse <- sqrt(mean((df_perf$pred - df_perf$obs)^2))
+
+# Calcul manuel du R²
+sst <- sum((df_perf$obs - mean(df_perf$obs))^2)
+sse <- sum((df_perf$obs - df_perf$pred)^2)
+rsq <- 1 - sse/sst
+data.frame(
+  RMSE = rmse,
+  R2 = rsq
+)
+```
+
+Ici, après avoir appliqué la régression Ridge sur les données de test, nous obtenons un R² d’environ 0.78, ce qui veut dire que le modèle explique 78% de la variation de l’espérance de vie. L’erreur quadratique moyenne (RMSE) est de 0.444, ce qui montre que les prédictions sont assez proches des valeurs réelles.
+
+#### Coefficients :
+
+```{r, echo = FALSE}
+# Extraire le modèle final
+finalModel_ridge <- ridge$finalModel
+coefficients_ridge <- coef(finalModel_ridge, s = bestLambda)
+print(coefficients_ridge)
+
+```
+
+Nous remarquons que les coefficients estimés avec la régression Ridge sont beaucoup plus petits que ceux obtenus avec la régression MCO. C’est normal car Ridge applique une pénalisation qui réduit l’amplitude des coefficients pour limiter les effets de la multicolinéarité et éviter le surapprentissage. Même si les variables restent dans le modèle, leur impact individuel est modéré.
+
+#### Importance des variables :
+
+```{r, fig.align='center', fig.width=8, fig.height=5, echo = FALSE}
+importance_ridge <- varImp(ridge, scale = FALSE)
+# Afficher l'importance des variables
+#print(importance_ridge)
+plot(importance_ridge, main="Importance des variables (Ridge, données non standardisées)")
+
+```
+
+Nous observons que la variable la plus importante dans le modèle Ridge est la mortalité infantile, suivie par le PIB par habitant, l’accès à l’eau et l’accès à l'électricité. Ces variables semblent jouer un rôle central dans l’explication de l’espérance de vie.
+
+### Lasso :
+
+#### Estimation lasso :
+
+```{r, echo = FALSE, warning = FALSE}
+set.seed(123)
+lasso <- train(
+  Life_expectancy ~., data = train.data, method = "glmnet",
+  trControl = trainControl("cv", number = 10),
+  tuneGrid = expand.grid(.alpha = 1, .lambda = lambda)
+  )
+lasso$bestTune
+```
+
+Nous avons estimé une régression Lasso avec validation croisée, et le meilleur lambda obtenu est d’environ 0.0123, avec alpha = 1 (car nous sommes en Lasso). Cela représente le niveau de pénalisation optimal : il permet de réduire certains coefficients sans trop impacter la qualité des prédictions du modèle.
+
+#### Prédiction :
+
+```{r, echo = FALSE}
+best_lambda <- lasso$bestTune$lambda
+
+
+# Make predictions
+predictions <- (lasso %>% predict(test.data))
+actuals <- (test.data$Life_expectancy)
+df_perf <- (data.frame(pred = predictions, obs = actuals))
+# Model prediction performance
+rmse <- sqrt(mean((df_perf$pred - df_perf$obs)^2))
+
+# Calcul manuel du R²
+sst <- sum((df_perf$obs - mean(df_perf$obs))^2)
+sse <- sum((df_perf$obs - df_perf$pred)^2)
+rsq <- 1 - sse/sst
+data.frame(
+  RMSE = rmse,
+  R2 = rsq
+)
+```
+Après avoir appliqué la régression Lasso sur les données de test, Nous obtenons un R² d’environ 0.79, ce qui signifie que le modèle explique 79% de la variation de l’espérance de vie. L’erreur quadratique moyenne (RMSE) est de 0.431, ce qui montre que les prédictions sont proches des valeurs observées. Nous notons aussi une légère amélioration de la performance par rapport au modèle Ridge estimé précédemment.
+
+#### Coefficients :
+
+```{r, echo = FALSE}
+finalModel_lasso <- lasso$finalModel
+coefficients_lasso <- coef(finalModel_lasso, s = bestLambda)
+print(coefficients_lasso)
+```
+
+Ici, nous voyons bien l’effet de la régression Lasso : plusieurs coefficients ont été réduits exactement à zéro (comme Control_corruption, dep_education, Political_Stability, Mal_nutrition, Rule_of_Law, etc.). Cela signifie que ces variables sont considérées comme non pertinentes pour le modèle final. Le Lasso a donc permis de faire une vraie sélection de variables en ne gardant que celles qui ont le plus d’impact sur l’espérance de vie.
+
+#### Importance des variables :
+
+```{r, fig.align='center', fig.width=8, fig.height=5, echo = FALSE}
+importance_lasso <- varImp(lasso, scale = FALSE)
+# Afficher l'importance des variables
+#print(importance_lasso)
+plot(importance_lasso)
+```
+
+Le graphique montre que seules quelques variables sont considérées comme importantes par le modèle Lasso, notamment Mortality_infant, GDP_per_habitant, et Access_electricity, acces_water. Cela confirme que Lasso fait une sélection automatique en gardant uniquement les variables les plus utiles pour prédire l’espérance de vie.
+
+### Elastic net :
+
+#### Estimation Elastic net :
+
+```{r, echo = FALSE}
+set.seed(123)
+elastic <- train(
+  Life_expectancy ~., data = train.data, method = "glmnet",
+  trControl = trainControl("cv", number = 10),
+  tuneLength = 10
+  )
+elastic$bestTune
+```
+
+Dans cette estimation par la méthode Elastic Net, le meilleur modèle a été obtenu avec un alpha égal à 0.4 et un lambda d’environ 0.0277. Cela signifie que le modèle combine 40% de pénalisation Lasso (qui sélectionne les variables) et 60% de Ridge (qui régularise les coefficients), ce qui permet de profiter des avantages des deux méthodes.
+
+#### Prédiction :
+
+```{r,  echo = FALSE, warning = FALSE}
+best_lambda <- elastic$bestTune$lambda
+
+# predictions
+predictions <- elastic %>% predict(test.data)
+
+actuals <- (test.data$Life_expectancy)
+df_perf <- na.omit(data.frame(pred = predictions, obs = actuals))
+ #performance du modele
+rmse <- sqrt(mean((df_perf$pred - df_perf$obs)^2))
+
+#calcule du R2
+sst <- sum((df_perf$obs - mean(df_perf$obs))^2)
+sse <- sum((df_perf$obs - df_perf$pred)^2)
+rsq <- 1 - sse/sst
+data.frame(
+  RMSE = rmse,
+  R2 = rsq
+)
+```
+
+Ici, nous obtenons un R² d’environ 0.79 et un RMSE de 0.434. Ces résultats sont légèrement moins bons que ceux obtenus avec le modèle Lasso mais meilleur que le modèle Ridge, ce qui signifie que l’Elastic Net, dans ce cas précis, est entre les deux pour prédire l’espérance de vie.
+
+#### Importance des variables :
+
+```{r,echo = FALSE}
+importance_elastic <- varImp(elastic, scale = FALSE)
+#Afficher l'importance des variables
+print(importance_elastic)
+```
+
+Nous voyons que les variables les plus influentes pour prédire l’espérance de vie sont la mortalité infantile, le PIB par habitant, l’efficacité du gouvernement et l’accès à l’eau. En revanche, certaines variables comme la corruption, la stabilité politique, la malnutrition ou l’état de droit ont une importance de 0, ce qui veut dire que le modèle ne les a pas retenues car elles n’apportaient pas suffisamment d’information utile pour la prédiction.
+
+```{r, fig.align='center', fig.width=8, fig.height=5, echo = FALSE}
+plot(importance_elastic)
+```
+
+Visuellement aussi, nous voyons clairement que la mortalité infantile est de loin la variable la plus importante dans le modèle Elastic Net, avec une influence beaucoup plus grande que les autres. Ensuite viennent le PIB par habitant, l'accès à l'électricité et l’accès à l’eau, qui ont une importance modérée. Les autres variables comme la stabilité politique ou encore la mal nutrition ont une importance proche de 0, ce qui confirme qu’elles ont été peu ou pas retenues par le modèle.
+
+### Comparaison des trois modèles :
+
+```{r, echo = FALSE}
+models <- list(ridge = ridge, lasso = lasso, elastic = elastic)
+resamples(models) %>% summary( metric = "RMSE")
+```
+
+En comparant les trois modèles avec la validation croisée, nous remarquons que l'Elastic Net présente le plus faible RMSE moyen (0.3591), juste devant le Lasso (0.3594) et le Ridge (0.3667). Même si les écarts sont faibles, l'Elastic Net montre une légère supériorité en termes de précision de prédiction.
+
+### Estimation d’un modèle MCO avec les variables retenues par l’Elastic Net:
+
+```{r,  echo = FALSE, warning = FALSE}
+model_final <- lm(Life_expectancy ~ .-Political_Stability, data = data_etude)
+summary(model_final)
+```
+
+Ici, nous avons estimé un modèle MCO en retenant uniquement les variables considérées comme les plus importantes par l’Elastic Net, à l’exception de Political_Stability qui avait un poids nul. Ce modèle présente un bon ajustement global (R² ajusté environ égal à 0.87), ce qui indique qu’il explique bien l’espérance de vie. Parmi les variables, Mortality_infant et GDP_per_habitant ressortent comme fortement significatives. Certaines variables restent non significatives, ce qui peut s’expliquer par une colinéarité résiduelle ou un lien plus faible avec l’espérance de vie.
+
+## Partie 3: Le double machine learning
+
+Dans cette partie, nous cherchons à estimer l’effet de la mortalité infantile sur l’espérance de vie à l’aide de la méthode Double Machine Learning (DML). Cette approche nous permet de mieux isoler l’effet causal d’une variable, tout en prenant en compte les autres variables explicatives comme facteurs de confusion.
+Nous avons choisi d’utiliser la variable “Mortality_infant” car, d’après les résultats obtenus avec les modèles Ridge, Lasso et Elastic Net, elle ressort comme la plus importante dans la prédiction de l’espérance de vie. Cela nous semble donc pertinent de la considérer comme variable explicative principale dans notre estimation DML.
+
+### Estimation avec Lasso en utilisant glmnet pour le DML :
+
+#### Estimation du coefficient mortalité infantile et de son intervalle de confiance :
+
+
+```{r,  echo = FALSE, warning = FALSE}
+set.seed(1234)
+dml_data = double_ml_data_from_data_frame(data_etude,
+y_col = "Life_expectancy",
+d_cols ="Mortality_infant" )
+
+ml_Y = lrn("regr.cv_glmnet", s = "lambda.min")
+ml_m = lrn("regr.cv_glmnet", s = "lambda.min")
+dml_plr = DoubleMLPLR$new(dml_data, ml_Y, ml_m)
+dml_plr$fit()
+```
+
+Ici, nous avons estimé l’effet de la mortalité infantile sur l’espérance de vie à l’aide de la méthode Double Machine Learning (DML). Le modèle utilise par défaut une validation croisée à 5 blocs, et s’appuie sur une régression Lasso avec validation croisée intégrée. Le paramètre de régularisation (lambda) est automatiquement sélectionné par le modèle à l’aide de cette validation croisée interne. Cela permet d’optimiser la précision de l’estimation tout en réduisant les risques de sur-apprentissage.
+
+#### Résultat de l'estimation :
+
+```{r, echo = FALSE}
+dml_plr$summary()
+```
+
+Le coefficient estimé est de -0.27586, ce qui signifie qu’une augmentation de la mortalité infantile d’une unité est associée à une baisse d’environ 0.27586 unités de l’espérance de vie. De plus, la p_value < 0.001, ce qui montre que cet effet est négatif et statistiquement significatif.
+
+#### Utilisation de boostrap pour la détermination des IC :
+
+```{r, echo = FALSE}
+dml_plr$bootstrap(method = "normal", n_rep_boot = 1000)
+dml_plr$confint(joint = TRUE)
+```
+
+L’intervalle de confiance bootstrap à 95% pour l’effet de la mortalité infantile est compris entre -0.323 et -0.229. Comme cet intervalle est entièrement négatif et ne contient pas zéro, cela confirme que l’effet estimé est significatif et négatif. Nous pouvons donc dire avec un bon niveau de certitude que la mortalité infantile a un impact défavorable sur l’espérance de vie.
+
+#### Estimation avec détermination des paramètres de Tuning par l’algorithme :
+
+Ici, nous cherchons à améliorer l’estimation du modèle DML en déterminant le meilleur paramètre lambda grâce à une procédure de tuning automatique. L’algorithme va tester différentes valeurs de lambda (entre 0.05 et 0.1) en utilisant une validation croisée à 5 blocs et sélectionnera celle qui minimise l’erreur quadratique moyenne (MSE). Cela permet d’avoir un modèle plus précis et mieux régularisé.
+
+```{r, include = FALSE}
+set.seed(1234)
+ml_Y = lrn("regr.glmnet")
+ml_m = lrn("regr.glmnet")
+dml_plr_t = DoubleMLPLR$new(dml_data, ml_Y, ml_m)
+
+#definition la grille de tuning pour le paramètre lambda
+grille_param = list(
+  "ml_l" = ParamSet$new(list(
+    lambda = p_dbl("lambda", lower = 0.05, upper = 0.1, special_vals = list(), default = 0.075))),
+  "ml_m" = ParamSet$new(list(
+    lambda = p_dbl("lambda", lower = 0.05, upper = 0.1, special_vals = list(), default = 0.075))))
+
+#Définir la stratégie de tuning (recherche + validation croisée)
+tune_settings = list(
+  terminator = trm("evals", n_evals = 100),  # on teste au maximum 100 modèles
+  algorithm = tnr("grid_search", resolution = 11),  # on divise l'intervalle en 11 valeurs pour lambda
+  rsmp_tune = rsmp("cv", folds = 5),  # validation croisée 5 folds
+  measure = list(
+    "ml_l" = msr("regr.mse"),  # critère d’évaluation pour prédire Y : MSE
+    "ml_m" = msr("regr.mse")   # pareil pour D
+  ))
+
+# Lancement du tuning
+dml_plr_t$tune(param_set = grille_param, tune_settings = tune_settings)
+
+```
+
+#### Résultat de l'estimation
+
+```{r, echo = FALSE}
+dml_plr_t$fit()
+dml_plr_t$summary()
+dml_plr_t$bootstrap(method = "normal", n_rep_boot = 1000)
+dml_plr_t$confint(joint = TRUE)
+```
+
+Nous constatons  que l’estimation avec tuning a légèrement réduit le coefficient de la mortalité infantile par rapport au modèle initial. De plus, l’intervalle de confiance est un peu plus resserré, ce qui indique une meilleure précision. Le tuning semble donc améliorer un peu la qualité de l’estimation, même si la différence reste faible.
+
+#### Résultat du paramètre choisi :
+
+```{r, echo = FALSE}
+dml_plr_t$params
+```
+Le tuning a permis de déterminer une valeur optimale de lambda égale à 0.1. Même si la valeur utilisée automatiquement dans l’estimation initiale n’était pas directement observable, la comparaison des résultats montre que les deux modèles sont très proches en termes de coefficients, ce qui indique que le niveau de régularisation était déjà bien calibré. Le tuning a néanmoins permis de préciser davantage les intervalles de confiance.
+
+### Conclusion du DML:
+
+Cette méthode nous a permis d’estimer l’effet de la mortalité infantile sur l’espérance de vie tout en contrôlant les autres variables explicatives pouvant agir comme facteurs de confusion. En utilisant des modèles Lasso avec validation croisée, nous avons pu obtenir une estimation robuste de cet effet. Les résultats montrent un impact négatif clair et précis de la mortalité infantile sur la l'espérance de vie. Enfin, le tuning des paramètres a permis de renforcer légèrement la qualité de l’estimation, en améliorant la précision du modèle.
+
+# Regroupement des pays selon leur profil d’espérance de vie : 
+
+Dans cette partie, nous utilisons l’algorithme de classification non supervisée k-means pour regrouper les pays en trois groupes (clusters) selon leur espérance de vie. Le but est de repérer des pays qui ont un profil similaire, et mieux comprendre les écarts de santé dans le monde. Cette approche permet de simplifier l’analyse en classant les pays par grands niveaux d’espérance de vie (faible, intermédiaire, élevée).
+
+```{r, echo = FALSE}
+set.seed(1234)
+data_clust <- data_etude_cr
+kmeans_result <- kmeans(data_clust, centers = 3, nstart = 25)
+
+# Ajouter les clusters à la base d'origine 
+data_segment <- data_etude
+data_segment$cluster <- as.factor(kmeans_result$cluster)
+data_cluster_etude=cbind(data$Pays,data_segment)
+colnames(data_cluster_etude)[1] <- "Pays"
+#resumé statistique par cluster
+cluster_summary <- data_segment %>%
+  group_by(cluster) %>%
+  summarise(
+    Effectif = n(),
+    Moyenne= mean(Life_expectancy, na.rm = TRUE),
+    Médiane_LifeExp = median(Life_expectancy, na.rm = TRUE),
+    Min = min(Life_expectancy, na.rm = TRUE),
+    Max = max(Life_expectancy, na.rm = TRUE),
+    Écart_type = sd(Life_expectancy, na.rm = TRUE)
+  )
+(cluster_summary)
+
+```
+
+Cluster 2 : Ce groupe correspond aux pays avec la meilleure espérance de vie (moyenne ≈ 80,4 ans). Ces pays affichent aussi une faible dispersion (écart-type ≈ 3,18), ce qui signifie que leur niveau de vie est assez homogène.
+
+Cluster 1 : Le groupe le plus nombreux (135 pays) représente un niveau intermédiaire d’espérance de vie, autour de 72,7 ans. Ce cluster présente une plus grande diversité entre les pays, comme le montre un écart-type plus élevé.
+
+Cluster 3 : Ce cluster regroupe les pays à faible espérance de vie (moyenne ≈ 61,7 ans). Il est caractérisé par un niveau de santé ou de développement plus préoccupant.
+
+# Représentation cartographique des groupes de pays selon l'espérance de vie : 
+
+```{r, fig.align='center', fig.width=8, fig.height=5, echo = FALSE}
+#data_cluster_etude
+#Merge avec le data de base
+data_carto_clust <- merge(data_cluster_etude,data_carto, by = "Pays")
+
+
+data_carto_new_clust<- merge(world, data_carto_clust, by.x = "adm0_a3", by.y = "ISO3") 
+#cartographie avec sf
+ggplot(data_carto_new_clust) +
+  geom_sf(aes(fill = as.factor(cluster))) +  # Clusters en couleurs différentes
+  scale_fill_brewer(palette = "Set2", name = "Cluster") +
+  theme_minimal() +
+  labs(title = "Classification des pays selon les clusters")
+```
+
+
+Sur la carte, nous voyons que les pays sont regroupés en trois clusters selon leur espérance de vie. Le cluster 2 (en orange) regroupe surtout les pays développés comme ceux d’Europe, d’Amérique du Nord, d’Océanie et certains d’Asie de l’Est. Ces pays ont une espérance de vie élevée. Le cluster 3 (en bleu) est principalement composé de pays africains et quelques pays d’Asie du Sud, avec une espérance de vie plus faible. Enfin, le cluster 1 (en vert) représente une situation intermédiaire, avec des pays d’Amérique Latine, d’Europe de l’Est ou d’Asie centrale. Cela montre bien les inégalités géographiques en terme d'ésperance de vie.
+
+
+
+# Conclusion : 
+
+Ce projet a permis d’explorer en profondeur les déterminants de l’espérance de vie dans le monde en 2022, à travers une démarche économétrique rigoureuse alliant méthodes classiques (MCO, 2SLS) et approches modernes (régularisation, double machine learning). Les résultats mettent en évidence l’importance majeure de certains facteurs, notamment la mortalité infantile, le PIB par habitant, ainsi que l’accès aux infrastructures de base.
+
+Malgré la complexité des interactions entre variables et les défis méthodologiques (multicolinéarité, endogénéité), l’utilisation de techniques avancées comme la PCA, le Lasso ou le DML a permis de dégager des effets robustes, tout en soulignant les limites des approches purement corrélationnelles.
+
+Au-delà des chiffres, cette étude rappelle que l’espérance de vie est le fruit de politiques publiques cohérentes, d’institutions solides, et d’un accès équitable aux ressources essentielles. Dans un monde marqué par de profondes inégalités, ces résultats plaident pour des investissements ciblés dans les domaines de la santé, de l’éducation, et de la gouvernance, afin d’améliorer durablement la qualité de vie des populations
